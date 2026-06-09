@@ -6,6 +6,7 @@ from collections import deque
 N = 9
 COLS = "abcdefghi"
 INF = 10**9
+WIN = 10**8
 
 
 def pos_to_xy(pos):
@@ -36,6 +37,12 @@ def goal_y(player):
 
 def forward_dir(player):
     return 1 if player == "P1" else -1
+
+
+def advancement(player, cell):
+    if cell is None:
+        return 0
+    return cell[1] if player == "P1" else N - 1 - cell[1]
 
 
 def action_kind(action):
@@ -79,6 +86,29 @@ def build_blocks(walls):
     return blocked
 
 
+def wall_signature(action):
+    if not isinstance(action, dict) or action.get("action") != "wall":
+        return None
+    parsed = parse_wall(action)
+    if parsed is None:
+        return None
+    x, y, orientation = parsed
+    return xy_to_pos(x, y), orientation
+
+
+def action_signature(action):
+    if not isinstance(action, dict):
+        return None
+    if action.get("action") == "move":
+        return "move", action.get("to")
+    if action.get("action") == "wall":
+        sig = wall_signature(action)
+        if sig is None:
+            return None
+        return "wall", sig[0], sig[1]
+    return None
+
+
 def blocks_with(walls, action):
     next_walls = list(walls) if isinstance(walls, list) else []
     next_walls.append({"at": action.get("at"), "orientation": action.get("orientation")})
@@ -89,6 +119,24 @@ def neighbors(cell, blocked):
     x, y = cell
     result = []
     for dx, dy in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+        nxt = (x + dx, y + dy)
+        if 0 <= nxt[0] < N and 0 <= nxt[1] < N and (cell, nxt) not in blocked:
+            result.append(nxt)
+    return result
+
+
+def move_neighbors(cell, blocked, player=None):
+    if cell is None:
+        return []
+    if player == "P1":
+        dirs = ((0, 1), (-1, 0), (1, 0), (0, -1))
+    elif player == "P2":
+        dirs = ((0, -1), (-1, 0), (1, 0), (0, 1))
+    else:
+        dirs = ((0, 1), (1, 0), (0, -1), (-1, 0))
+    x, y = cell
+    result = []
+    for dx, dy in dirs:
         nxt = (x + dx, y + dy)
         if 0 <= nxt[0] < N and 0 <= nxt[1] < N and (cell, nxt) not in blocked:
             result.append(nxt)
@@ -121,6 +169,10 @@ def shortest_path(start, player, blocked):
 def distance_to_goal(start, player, blocked):
     path = shortest_path(start, player, blocked)
     return len(path) - 1 if path else 99
+
+
+def has_path(start, player, blocked):
+    return distance_to_goal(start, player, blocked) < 99
 
 
 def shortest_path_count(start, player, blocked, cap=500):
@@ -163,6 +215,74 @@ def remaining_walls(state, player):
         return 0
 
 
+def wall_overlaps(walls, action):
+    sig = wall_signature(action)
+    if sig is None:
+        return True
+    at, orientation = sig
+    new_edges = set(wall_edges({"at": at, "orientation": orientation}))
+    for wall in walls:
+        other = wall_signature(wall)
+        if other is None:
+            continue
+        if other[0] == at and other[1] != orientation:
+            return True
+        if new_edges & set(wall_edges(wall)):
+            return True
+    return False
+
+
+def legal_sim_actions(sim_state):
+    player = sim_state.get("turn", sim_state.get("you", "P1"))
+    opp = opponent(player)
+    pawns = sim_state.get("pawns", {})
+    walls = sim_state.get("walls", [])
+    blocked = build_blocks(walls)
+    here = pos_to_xy(pawns.get(player)) if isinstance(pawns, dict) else None
+    occupied = pos_to_xy(pawns.get(opp)) if isinstance(pawns, dict) else None
+
+    actions = []
+    for nxt in move_neighbors(here, blocked, player):
+        if nxt != occupied:
+            actions.append({"action": "move", "to": xy_to_pos(nxt[0], nxt[1])})
+
+    if remaining_walls(sim_state, player) <= 0:
+        return actions
+
+    my_pos = here
+    opp_pos = occupied
+    for x in range(N - 1):
+        for y in range(N - 1):
+            at = xy_to_pos(x, y)
+            for orientation in ("h", "v"):
+                action = {"action": "wall", "at": at, "orientation": orientation}
+                if wall_overlaps(walls, action):
+                    continue
+                next_blocked = blocks_with(walls, action)
+                if has_path(my_pos, player, next_blocked) and has_path(opp_pos, opp, next_blocked):
+                    actions.append(action)
+    return actions
+
+
+def apply_sim_action(sim_state, action):
+    player = sim_state.get("turn", sim_state.get("you", "P1"))
+    next_state = {
+        "you": sim_state.get("you", player),
+        "turn": opponent(player),
+        "pawns": dict(sim_state.get("pawns", {})),
+        "walls": list(sim_state.get("walls", [])),
+        "remaining_walls": dict(sim_state.get("remaining_walls", {})),
+    }
+    if action_kind(action) == "move":
+        next_state["pawns"][player] = action.get("to")
+    elif action_kind(action) == "wall":
+        sig = wall_signature(action)
+        if sig is not None:
+            next_state["walls"].append({"action": "wall", "at": sig[0], "orientation": sig[1]})
+            next_state["remaining_walls"][player] = max(0, remaining_walls(next_state, player) - 1)
+    return next_state
+
+
 def center_score(cell):
     if cell is None:
         return 0
@@ -181,6 +301,20 @@ def blocks_path_score(action, path):
         if edge in edge_set or (edge[1], edge[0]) in edge_set:
             score += 1
     return score
+
+
+def wall_near_path_score(action, path):
+    parsed = parse_wall(action)
+    if parsed is None or not path:
+        return 0
+    x, y, _ = parsed
+    cells = ((x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1))
+    best = 999
+    for cell in cells:
+        for idx, path_cell in enumerate(path):
+            dist = abs(cell[0] - path_cell[0]) + abs(cell[1] - path_cell[1])
+            best = min(best, dist * 10 + idx)
+    return max(0, 120 - best * 3)
 
 
 def move_score(action, player, my_pos, opp_pos, blocked, my_dist, opp_dist):
@@ -250,6 +384,107 @@ def wall_score(action, player, opp, my_pos, opp_pos, walls, blocked, my_dist, op
     return score
 
 
+def evaluate_position(sim_state, root_player):
+    opp = opponent(root_player)
+    pawns = sim_state.get("pawns", {})
+    walls = sim_state.get("walls", [])
+    blocked = build_blocks(walls)
+    my_pos = pos_to_xy(pawns.get(root_player)) if isinstance(pawns, dict) else None
+    opp_pos = pos_to_xy(pawns.get(opp)) if isinstance(pawns, dict) else None
+    my_dist = distance_to_goal(my_pos, root_player, blocked)
+    opp_dist = distance_to_goal(opp_pos, opp, blocked)
+
+    if my_dist == 0:
+        return WIN
+    if opp_dist == 0:
+        return -WIN
+
+    my_path_count = shortest_path_count(my_pos, root_player, blocked)
+    opp_path_count = shortest_path_count(opp_pos, opp, blocked)
+    my_adv = my_pos[1] if root_player == "P1" and my_pos else N - 1 - my_pos[1] if my_pos else 0
+    opp_adv = opp_pos[1] if opp == "P1" and opp_pos else N - 1 - opp_pos[1] if opp_pos else 0
+
+    score = 0
+    score += (opp_dist - my_dist) * 14500
+    score -= my_dist * 650
+    score += opp_dist * 450
+    score += (my_adv - opp_adv) * 900
+    score += center_score(my_pos) * 70
+    score -= center_score(opp_pos) * 45
+    score += (remaining_walls(sim_state, root_player) - remaining_walls(sim_state, opp)) * 260
+    score += (opp_path_count - my_path_count) * 18
+    if my_dist <= 2:
+        score += (3 - my_dist) * 4500
+    if opp_dist <= 2:
+        score -= (3 - opp_dist) * 5200
+    return score
+
+
+def tactical_score(sim_state, action, player):
+    opp = opponent(player)
+    pawns = sim_state.get("pawns", {})
+    walls = sim_state.get("walls", [])
+    blocked = build_blocks(walls)
+    my_pos = pos_to_xy(pawns.get(player)) if isinstance(pawns, dict) else None
+    opp_pos = pos_to_xy(pawns.get(opp)) if isinstance(pawns, dict) else None
+    my_dist = distance_to_goal(my_pos, player, blocked)
+    opp_dist = distance_to_goal(opp_pos, opp, blocked)
+    if action_kind(action) == "move":
+        return move_score(action, player, my_pos, opp_pos, blocked, my_dist, opp_dist)
+    score = wall_score(action, player, opp, my_pos, opp_pos, walls, blocked, my_dist, opp_dist)
+    opp_path = shortest_path(opp_pos, opp, blocked)
+    my_path = shortest_path(my_pos, player, blocked)
+    score += blocks_path_score(action, opp_path) * 900
+    score -= blocks_path_score(action, my_path) * 1600
+    score += wall_near_path_score(action, opp_path) * 9
+    return score
+
+
+def ordered_candidates(sim_state, player, limit):
+    actions = legal_sim_actions(sim_state)
+    if not actions:
+        return []
+    for action in actions:
+        if action_kind(action) == "move":
+            to = pos_to_xy(action.get("to"))
+            if to is not None and to[1] == goal_y(player):
+                return [action]
+    scored = []
+    for action in actions:
+        scored.append((tactical_score(sim_state, action, player) + stable_tiebreak(action), action))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [action for _, action in scored[:limit]]
+
+
+def search(sim_state, root_player, depth, alpha, beta):
+    turn = sim_state.get("turn", root_player)
+    base = evaluate_position(sim_state, root_player)
+    if depth <= 0 or abs(base) >= WIN:
+        return base
+
+    maximizing = turn == root_player
+    candidates = ordered_candidates(sim_state, turn, 8 if depth >= 2 else 6)
+    if not candidates:
+        return base
+
+    if maximizing:
+        value = -INF
+        for action in candidates:
+            value = max(value, search(apply_sim_action(sim_state, action), root_player, depth - 1, alpha, beta))
+            alpha = max(alpha, value)
+            if alpha >= beta:
+                break
+        return value
+
+    value = INF
+    for action in candidates:
+        value = min(value, search(apply_sim_action(sim_state, action), root_player, depth - 1, alpha, beta))
+        beta = min(beta, value)
+        if alpha >= beta:
+            break
+    return value
+
+
 def stable_tiebreak(action):
     text = json.dumps(action, sort_keys=True, separators=(",", ":"))
     return sum(ord(ch) for ch in text) % 97
@@ -307,10 +542,49 @@ def choose_action(state):
             should_wall = True
         if my_dist <= 2 and best_move is not None:
             should_wall = False
+        # Do not let early wall tactics pin us to our own back rank forever.
+        my_adv = advancement(player, my_pos)
+        if my_adv <= 2 and my_dist >= opp_dist:
+            should_wall = False
+        if my_dist <= opp_dist - 2 and opp_dist > 3:
+            should_wall = False
         if should_wall:
             return best_wall
 
-    return best_move or best_wall or legal[0]
+    tactical_choice = best_move or best_wall or legal[0]
+
+    sim_state = {
+        "you": player,
+        "turn": player,
+        "pawns": dict(state.get("pawns", {})),
+        "walls": list(walls) if isinstance(walls, list) else [],
+        "remaining_walls": dict(state.get("remaining_walls", {}))
+        if isinstance(state.get("remaining_walls", {}), dict)
+        else {player: rem, opp: 0},
+    }
+    root_candidates = ordered_candidates(sim_state, player, 12)
+    legal_by_sig = {action_signature(a): a for a in legal}
+
+    best_action = tactical_choice
+    best_score = -INF
+    for action in root_candidates:
+        sig = action_signature(action)
+        if sig not in legal_by_sig:
+            continue
+        score = search(apply_sim_action(sim_state, action), player, 1, -INF, INF)
+        if action_kind(action) == "wall":
+            my_adv = advancement(player, my_pos)
+            if my_adv <= 2:
+                score -= 14000
+            if my_dist <= opp_dist - 2 and opp_dist > 3:
+                score -= 10000
+        score += tactical_score(sim_state, action, player) * 0.08
+        score += stable_tiebreak(action)
+        if score > best_score:
+            best_score = score
+            best_action = legal_by_sig[sig]
+
+    return best_action
 
 
 def legal_output(action):
