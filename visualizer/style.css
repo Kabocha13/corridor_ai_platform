@@ -1,0 +1,162 @@
+:root {
+  color-scheme: light;
+  --wood: #d8b16f;
+  --line: #5a3a1d;
+  --p1: #1167b1;
+  --p2: #c7352f;
+  --wall: #20242a;
+  --invalid: #ffd166;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f4f5f7;
+  color: #17191c;
+}
+
+.app {
+  min-height: 100vh;
+  padding: 18px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+button {
+  min-width: 40px;
+  height: 34px;
+  border: 1px solid #b9c0ca;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(320px, 720px) minmax(260px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.board {
+  position: relative;
+  width: min(78vw, 720px);
+  aspect-ratio: 1;
+  background: var(--wood);
+  border: 4px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  grid-template-rows: repeat(9, 1fr);
+}
+
+.cell {
+  border: 1px solid rgba(90, 58, 29, 0.45);
+  position: relative;
+}
+
+.coord {
+  position: absolute;
+  left: 4px;
+  bottom: 3px;
+  font-size: 10px;
+  color: rgba(40, 26, 10, 0.65);
+}
+
+.pawn {
+  position: absolute;
+  width: 54%;
+  height: 54%;
+  border-radius: 50%;
+  left: 23%;
+  top: 23%;
+  display: grid;
+  place-items: center;
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+}
+
+.p1 {
+  background: var(--p1);
+}
+
+.p2 {
+  background: var(--p2);
+}
+
+.wall {
+  position: absolute;
+  background: var(--wall);
+  border-radius: 3px;
+  z-index: 4;
+}
+
+.wall.h {
+  width: calc(100% / 9 * 2);
+  height: 8px;
+  transform: translateY(-4px);
+}
+
+.wall.v {
+  width: 8px;
+  height: calc(100% / 9 * 2);
+  transform: translateX(-4px);
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #d4d9e0;
+  border-radius: 8px;
+  padding: 14px;
+  min-height: 280px;
+}
+
+.panel div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid #eceff3;
+}
+
+h2 {
+  font-size: 16px;
+  margin: 16px 0 8px;
+}
+
+pre {
+  min-height: 120px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 6px;
+  background: #17191c;
+  color: #f3f6fa;
+  white-space: pre-wrap;
+}
+
+pre.invalid {
+  background: #3b2d00;
+  color: var(--invalid);
+}
+
+@media (max-width: 760px) {
+  .content {
+    grid-template-columns: 1fr;
+  }
+
+  .board {
+    width: calc(100vw - 36px);
+  }
+}
+

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Corridor Match Visualizer</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="toolbar">
+        <input id="fileInput" type="file" accept=".jsonl,application/jsonl,text/plain" />
+        <button id="firstBtn" title="最初">|&lt;</button>
+        <button id="prevBtn" title="1手戻る">&lt;</button>
+        <button id="playBtn" title="自動再生">Play</button>
+        <button id="nextBtn" title="1手進む">&gt;</button>
+        <button id="lastBtn" title="最後">&gt;|</button>
+        <label>Speed <input id="speedInput" type="range" min="100" max="1500" step="100" value="500" /></label>
+      </section>
+      <section class="content">
+        <div id="board" class="board" aria-label="9x9 board"></div>
+        <aside class="panel">
+          <div><strong>Match</strong> <span id="matchId">-</span></div>
+          <div><strong>Turn</strong> <span id="turnIndex">0</span></div>
+          <div><strong>Side</strong> <span id="turnSide">-</span></div>
+          <div><strong>Winner</strong> <span id="winner">-</span></div>
+          <div><strong>P1 invalid</strong> <span id="p1Invalid">0</span></div>
+          <div><strong>P2 invalid</strong> <span id="p2Invalid">0</span></div>
+          <h2>Action</h2>
+          <pre id="actionView">ログファイルを選択してください</pre>
+        </aside>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
+

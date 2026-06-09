@@ -1,0 +1,37 @@
+Pythonで、このゲーム大会用のBotを1ファイルで作成してください。
+
+Botは標準入力から1行ずつJSONを受け取り、各行に対して1つのJSON actionを標準出力へ1行で返します。
+
+入力stateには次の情報があります。
+
+- you: 自分が "P1" か "P2" か
+- pawns: P1/P2の現在位置
+- walls: 置かれている壁
+- remaining_walls: 残り壁枚数
+- legal_actions: 現在選べる合法手の一覧
+
+返すactionは、必ず legal_actions の中から1つ選び、type を付けて次の形式にしてください。
+
+移動:
+{"type":"action","action":"move","to":"e2"}
+
+壁:
+{"type":"action","action":"wall","at":"e3","orientation":"h"}
+
+重要な制約:
+
+- 標準出力にはaction JSONだけを出してください
+- デバッグ出力は標準エラーに出してください
+- printするときは flush=True を付けてください
+- for line in sys.stdin: で複数ターンに対応してください
+- JSONとして読めない出力や、legal_actionsにない手は不正手になります
+- 外部ライブラリは使わず、Python標準ライブラリだけで書いてください
+
+方針:
+
+- legal_actionsから安全に1手を選ぶ
+- 可能なら自分のゴール方向へ進む移動を優先する
+- 良い移動がない場合は他の合法手を選ぶ
+- タイムアウトしないように処理を軽くする
+
+出力はPythonコードだけにしてください。
