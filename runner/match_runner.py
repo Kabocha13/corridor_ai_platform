@@ -51,7 +51,7 @@ def run_match(
     match_id: str = "match_000001",
     log_file: str | Path | None = None,
     seed: int | None = None,
-    timeout_seconds: float = 1.0,
+    timeout_seconds: float = 2.0,
 ) -> MatchResult:
     seed = random.randrange(1_000_000_000) if seed is None else seed
     rng = random.Random(seed)
