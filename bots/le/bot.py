@@ -52,7 +52,7 @@ agent=None
 
 try:
     from model import QTableAgent
-    p=Path(__file__).with_name("model1000.pkl")
+    p=Path(__file__).with_name("model.pkl")
     if p.exists():
         agent=QTableAgent.load(str(p))
         agent.epsilon=0.0
