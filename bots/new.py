@@ -1,388 +1,303 @@
-import sys,json,random,time,math
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# 9x9 Quoridor-style tournament bot (Python standard library only).
+# Protocol: read one JSON state per line from stdin,
+# write exactly one {"type":"action", ...} JSON line to stdout (flushed).
+
+import sys
+import json
 from collections import deque
 
-N=9
-DIRS=[(-1,0),(1,0),(0,-1),(0,1)]
-INF=10**9
-SIMS=180
-TIME_LIMIT=0.85
-C=1.4
+N = 9
+CELLS = N * N
+GOAL_ROW = {"P1": N - 1, "P2": 0}
+FWD = {"P1": 1, "P2": -1}
 
-def eprint(*a):
-    print(*a,file=sys.stderr,flush=True)
 
-def pos_to_rc(s):
-    if isinstance(s,(list,tuple)):
-        return int(s[0]),int(s[1])
-    if isinstance(s,dict):
-        if "row" in s and "col" in s:
-            return int(s["row"]),int(s["col"])
-        if "r" in s and "c" in s:
-            return int(s["r"]),int(s["c"])
-    s=str(s).strip().lower()
-    c=ord(s[0])-97
-    r=int(s[1:])-1
-    return r,c
+def parse_cell(s):
+    s = str(s).strip().lower()
+    c = ord(s[0]) - 97
+    r = int(s[1:]) - 1
+    if 0 <= c < N and 0 <= r < N:
+        return r * N + c
+    raise ValueError("bad cell")
 
-def rc_to_pos(r,c):
-    return chr(97+c)+str(r+1)
 
-def norm_action(a):
-    if isinstance(a,str):
-        return {"type":"action","action":"move","to":a}
-    b=dict(a)
-    if "type" not in b:
-        b["type"]="action"
-    return b
+def ekey(a, b):
+    return (a, b) if a < b else (b, a)
 
-def action_key(a):
-    a=norm_action(a)
-    if a.get("action")=="move":
-        return ("m",a.get("to"))
-    return ("w",a.get("at"),a.get("orientation"))
 
-def same_action(a,b):
-    return action_key(a)==action_key(b)
+def wall_edges(at, orientation):
+    s = str(at).strip().lower()
+    c = ord(s[0]) - 97
+    r = int(s[1:]) - 1
+    if not (0 <= c < N - 1 and 0 <= r < N - 1):
+        raise ValueError("bad wall")
+    base = r * N + c
+    o = str(orientation).strip().lower()[:1]
+    if o == "h":
+        return (ekey(base, base + N), ekey(base + 1, base + N + 1))
+    if o == "v":
+        return (ekey(base, base + 1), ekey(base + N, base + N + 1))
+    raise ValueError("bad orientation")
 
-def get_player_ids(state):
-    you=state.get("you","P1")
-    opp="P2" if you=="P1" else "P1"
-    return you,opp
 
-def get_pawn(state,p):
-    x=state.get("pawns",{}).get(p)
-    if x is None:
+def bfs_field(sources, blocked):
+    dist = [-1] * CELLS
+    dq = deque()
+    for i in sources:
+        if dist[i] < 0:
+            dist[i] = 0
+            dq.append(i)
+    while dq:
+        u = dq.popleft()
+        nd = dist[u] + 1
+        r = u // N
+        c = u - r * N
+        if r > 0:
+            v = u - N
+            if dist[v] < 0 and (v, u) not in blocked:
+                dist[v] = nd
+                dq.append(v)
+        if r < N - 1:
+            v = u + N
+            if dist[v] < 0 and (u, v) not in blocked:
+                dist[v] = nd
+                dq.append(v)
+        if c > 0:
+            v = u - 1
+            if dist[v] < 0 and (v, u) not in blocked:
+                dist[v] = nd
+                dq.append(v)
+        if c < N - 1:
+            v = u + 1
+            if dist[v] < 0 and (u, v) not in blocked:
+                dist[v] = nd
+                dq.append(v)
+    return dist
+
+
+def goal_sources(row):
+    s = row * N
+    return range(s, s + N)
+
+
+def make_action(a):
+    act = a.get("action")
+    if act == "move" and a.get("to") is not None:
+        return {"type": "action", "action": "move", "to": a["to"]}
+    if act == "wall" and a.get("at") is not None:
+        return {"type": "action", "action": "wall", "at": a["at"], "orientation": a.get("orientation")}
+    out = dict(a)
+    out["type"] = "action"
+    return out
+
+
+def decide(state):
+    legal = state.get("legal_actions")
+    if not isinstance(legal, list) or not legal:
         return None
-    return pos_to_rc(x)
 
-def parse_walls(state):
-    walls=[]
-    for w in state.get("walls",[]):
-        if isinstance(w,dict):
-            at=w.get("at") or w.get("position") or w.get("pos")
-            o=w.get("orientation") or w.get("dir")
-            if at is not None and o is not None:
-                r,c=pos_to_rc(at)
-                walls.append((r,c,str(o).lower()[0]))
-        elif isinstance(w,(list,tuple)) and len(w)>=3:
-            r,c=pos_to_rc(w[0])
-            walls.append((r,c,str(w[1]).lower()[0]))
-    return walls
+    me = state.get("you")
+    if me not in ("P1", "P2"):
+        t = state.get("turn")
+        me = t if t in ("P1", "P2") else "P1"
+    opp = "P2" if me == "P1" else "P1"
 
-def blocked_edges_from_walls(walls):
-    b=set()
-    for r,c,o in walls:
-        if o=="h":
-            for dc in (0,1):
-                a=(r,c+dc)
-                z=(r+1,c+dc)
-                if 0<=a[0]<N and 0<=a[1]<N and 0<=z[0]<N and 0<=z[1]<N:
-                    b.add((a,z))
-                    b.add((z,a))
-        else:
-            for dr in (0,1):
-                a=(r+dr,c)
-                z=(r+dr,c+1)
-                if 0<=a[0]<N and 0<=a[1]<N and 0<=z[0]<N and 0<=z[1]<N:
-                    b.add((a,z))
-                    b.add((z,a))
-    return b
+    pawns = state.get("pawns") or {}
+    my_idx = parse_cell(pawns.get(me) or ("e1" if me == "P1" else "e9"))
+    opp_idx = parse_cell(pawns.get(opp) or ("e9" if opp == "P2" else "e1"))
 
-def infer_goal(state,p):
-    r,c=get_pawn(state,p)
-    if p=="P1":
-        return 8
-    return 0
-
-def neighbors(r,c,blocked):
-    for dr,dc in DIRS:
-        nr,nc=r+dr,c+dc
-        if 0<=nr<N and 0<=nc<N and ((r,c),(nr,nc)) not in blocked:
-            yield nr,nc
-
-def shortest_dist(start,goal,blocked):
-    q=deque([start])
-    d={start:0}
-    while q:
-        r,c=q.popleft()
-        if r==goal:
-            return d[(r,c)]
-        for nr,nc in neighbors(r,c,blocked):
-            if (nr,nc) not in d:
-                d[(nr,nc)]=d[(r,c)]+1
-                q.append((nr,nc))
-    return INF
-
-def shortest_nexts(start,goal,blocked,legal_moves):
-    best=[]
-    bd=INF
-    for a in legal_moves:
-        if norm_action(a).get("action")!="move":
+    blocked = set()
+    for w in state.get("walls") or []:
+        if not isinstance(w, dict):
             continue
-        r,c=pos_to_rc(norm_action(a).get("to"))
-        d=shortest_dist((r,c),goal,blocked)
-        if d<bd:
-            bd=d
-            best=[a]
-        elif d==bd:
-            best.append(a)
-    return best
-
-def classify_actions(state):
-    legal=[norm_action(a) for a in state.get("legal_actions",[])]
-    moves=[a for a in legal if a.get("action")=="move"]
-    walls=[a for a in legal if a.get("action")=="wall"]
-    return legal,moves,walls
-
-def wall_after(walls,a):
-    a=norm_action(a)
-    if a.get("action")!="wall":
-        return walls
-    r,c=pos_to_rc(a.get("at"))
-    o=str(a.get("orientation")).lower()[0]
-    return walls+[(r,c,o)]
-
-def wall_features(state,a):
-    you,opp=get_player_ids(state)
-    my=get_pawn(state,you)
-    op=get_pawn(state,opp)
-    walls=parse_walls(state)
-    b0=blocked_edges_from_walls(walls)
-    md0=shortest_dist(my,infer_goal(state,you),b0)
-    od0=shortest_dist(op,infer_goal(state,opp),b0)
-    nw=wall_after(walls,a)
-    b1=blocked_edges_from_walls(nw)
-    md1=shortest_dist(my,infer_goal(state,you),b1)
-    od1=shortest_dist(op,infer_goal(state,opp),b1)
-    if md1>=INF or od1>=INF:
-        return -INF
-    gain=(od1-od0)*2.4-(md1-md0)*1.7
-    ar,ac=pos_to_rc(norm_action(a).get("at"))
-    orow,ocol=op
-    mrow,mcol=my
-    near_opp=max(0,4-(abs(ar-orow)+abs(ac-ocol)))*0.25
-    near_me=max(0,3-(abs(ar-mrow)+abs(ac-mcol)))*0.08
-    center=-(abs(ac-3.5))*0.03
-    return gain+near_opp+near_me+center
-
-def heuristic_score(state,a):
-    you,opp=get_player_ids(state)
-    my=get_pawn(state,you)
-    op=get_pawn(state,opp)
-    walls=parse_walls(state)
-    blocked=blocked_edges_from_walls(walls)
-    my_goal=infer_goal(state,you)
-    op_goal=infer_goal(state,opp)
-    md0=shortest_dist(my,my_goal,blocked)
-    od0=shortest_dist(op,op_goal,blocked)
-    a=norm_action(a)
-    if a.get("action")=="move":
-        nr,nc=pos_to_rc(a.get("to"))
-        md=shortest_dist((nr,nc),my_goal,blocked)
-        forward=md0-md
-        side_penalty=abs(nc-4)*0.035
-        return (od0-md)*1.8+forward*2.0-side_penalty+random.random()*0.01
-    s=wall_features(state,a)
-    remain=state.get("remaining_walls",{}).get(you,10)
-    if remain<=0:
-        return -INF
-    if md0<=2:
-        s-=4
-    if od0<=3:
-        s+=1.2
-    return s+random.random()*0.01
-
-def choose_candidate_actions(state):
-    legal,moves,walls=classify_actions(state)
-    if not legal:
-        return []
-    you,opp=get_player_ids(state)
-    blocked=blocked_edges_from_walls(parse_walls(state))
-    sm=shortest_nexts(get_pawn(state,you),infer_goal(state,you),blocked,moves)
-    scored=[]
-    for a in legal:
-        scored.append((heuristic_score(state,a),a))
-    scored.sort(key=lambda x:x[0],reverse=True)
-    cand=[a for _,a in scored[:18]]
-    for a in sm:
-        if not any(same_action(a,x) for x in cand):
-            cand.append(a)
-    return cand or legal
-
-def light_apply(state,a):
-    s={
-        "you":state.get("you","P1"),
-        "pawns":dict(state.get("pawns",{})),
-        "walls":list(state.get("walls",[])),
-        "remaining_walls":json.loads(json.dumps(state.get("remaining_walls",{}))),
-        "legal_actions":[]
-    }
-    you,opp=get_player_ids(state)
-    a=norm_action(a)
-    if a.get("action")=="move":
-        s["pawns"][you]=a.get("to")
-    else:
-        s["walls"].append({"at":a.get("at"),"orientation":a.get("orientation")})
-        if you in s["remaining_walls"]:
-            s["remaining_walls"][you]=max(0,s["remaining_walls"][you]-1)
-    s["you"]=opp
-    return s
-
-def terminal_value(state,root_you):
-    you,opp=get_player_ids(state)
-    for p in ("P1","P2"):
-        pos=get_pawn(state,p)
-        if pos is not None and pos[0]==infer_goal(state,p):
-            return 1.0 if p==root_you else 0.0
-    return None
-
-def pseudo_legal_actions(state):
-    legal=state.get("legal_actions")
-    if legal:
-        return [norm_action(a) for a in legal]
-    you,opp=get_player_ids(state)
-    my=get_pawn(state,you)
-    op=get_pawn(state,opp)
-    blocked=blocked_edges_from_walls(parse_walls(state))
-    acts=[]
-    for nr,nc in neighbors(my[0],my[1],blocked):
-        if (nr,nc)==op:
-            jr,jc=nr+(nr-my[0]),nc+(nc-my[1])
-            if 0<=jr<N and 0<=jc<N and ((nr,nc),(jr,jc)) not in blocked:
-                acts.append({"type":"action","action":"move","to":rc_to_pos(jr,jc)})
-            else:
-                for ar,ac in neighbors(nr,nc,blocked):
-                    if (ar,ac)!=my:
-                        acts.append({"type":"action","action":"move","to":rc_to_pos(ar,ac)})
-        else:
-            acts.append({"type":"action","action":"move","to":rc_to_pos(nr,nc)})
-    return acts
-
-def rollout(state,root_you,depth=34):
-    s=json.loads(json.dumps(state))
-    for _ in range(depth):
-        v=terminal_value(s,root_you)
-        if v is not None:
-            return v
-        acts=pseudo_legal_actions(s)
-        if not acts:
-            break
-        if random.random()<0.78:
-            a=max(acts,key=lambda x:heuristic_score(s,x))
-        else:
-            a=random.choice(acts)
-        s=light_apply(s,a)
-    you,opp=get_player_ids(s)
-    blocked=blocked_edges_from_walls(parse_walls(s))
-    d_root=shortest_dist(get_pawn(s,root_you),infer_goal(s,root_you),blocked)
-    other="P2" if root_you=="P1" else "P1"
-    d_other=shortest_dist(get_pawn(s,other),infer_goal(s,other),blocked)
-    return 1/(1+math.exp((d_root-d_other)*0.9))
-
-class Node:
-    __slots__=("parent","action","children","untried","wins","visits")
-    def __init__(self,parent=None,action=None,untried=None):
-        self.parent=parent
-        self.action=action
-        self.children=[]
-        self.untried=untried or []
-        self.wins=0.0
-        self.visits=0
-
-    def uct_child(self):
-        logp=math.log(max(1,self.visits))
-        return max(self.children,key=lambda n:n.wins/max(1,n.visits)+C*math.sqrt(logp/max(1,n.visits))+random.random()*1e-9)
-
-def mcts(state):
-    root_you=state.get("you","P1")
-    root=Node(untried=choose_candidate_actions(state))
-    deadline=time.time()+TIME_LIMIT
-    sims=0
-    while sims<SIMS and time.time()<deadline:
-        s=json.loads(json.dumps(state))
-        node=root
-        while not node.untried and node.children:
-            node=node.uct_child()
-            s=light_apply(s,node.action)
-        if node.untried:
-            a=node.untried.pop(random.randrange(len(node.untried)))
-            s=light_apply(s,a)
-            child=Node(parent=node,action=a,untried=choose_candidate_actions(s))
-            node.children.append(child)
-            node=child
-        result=rollout(s,root_you)
-        while node is not None:
-            node.visits+=1
-            node.wins+=result
-            result=1.0-result
-            node=node.parent
-        sims+=1
-    if not root.children:
-        legal=state.get("legal_actions",[])
-        return norm_action(random.choice(legal)) if legal else {"type":"action","action":"move","to":"e2"}
-    return max(root.children,key=lambda n:(n.visits,n.wins/max(1,n.visits))).action
-
-def opening_or_forced(state):
-    legal,moves,walls=classify_actions(state)
-    if not legal:
-        return None
-    you,opp=get_player_ids(state)
-    blocked=blocked_edges_from_walls(parse_walls(state))
-    my=get_pawn(state,you)
-    op=get_pawn(state,opp)
-    md=shortest_dist(my,infer_goal(state,you),blocked)
-    od=shortest_dist(op,infer_goal(state,opp),blocked)
-    sm=shortest_nexts(my,infer_goal(state,you),blocked,moves)
-    if len(legal)==1:
-        return legal[0]
-    turn=state.get("turn",state.get("ply",0))
-    if turn<2 and sm:
-        return random.choice(sm)
-    if md<=2 and sm:
-        return random.choice(sm)
-    if od<=2 and state.get("remaining_walls",{}).get(you,10)>0:
-        ww=[a for a in walls if wall_features(state,a)>0.8]
-        if ww:
-            return max(ww,key=lambda a:wall_features(state,a))
-    return None
-
-def select_action(state):
-    legal=[norm_action(a) for a in state.get("legal_actions",[])]
-    if not legal:
-        return {"type":"action","action":"move","to":"e2"}
-    a=opening_or_forced(state)
-    if a is None:
+        at = w.get("at") or w.get("position") or w.get("pos")
+        o = w.get("orientation") or w.get("dir") or w.get("o")
+        if at is None or o is None:
+            continue
         try:
-            a=mcts(state)
-        except Exception as ex:
-            eprint("fallback",repr(ex))
-            a=max(legal,key=lambda x:heuristic_score(state,x))
-    for x in legal:
-        if same_action(a,x):
-            return x
-    return max(legal,key=lambda x:heuristic_score(state,x))
+            e1, e2 = wall_edges(at, o)
+        except Exception:
+            continue
+        blocked.add(e1)
+        blocked.add(e2)
+
+    moves = []
+    wall_acts = []
+    for a in legal:
+        if not isinstance(a, dict):
+            continue
+        act = a.get("action")
+        if act == "move" and a.get("to"):
+            moves.append(a)
+        elif act == "wall" and a.get("at") and a.get("orientation"):
+            wall_acts.append(a)
+
+    f_my = bfs_field(goal_sources(GOAL_ROW[me]), blocked)
+    f_op = bfs_field(goal_sources(GOAL_ROW[opp]), blocked)
+    my_d = f_my[my_idx]
+    opp_d = f_op[opp_idx]
+    if my_d < 0:
+        my_d = 999
+    if opp_d < 0:
+        opp_d = 999
+
+    rem = state.get("remaining_walls") or {}
+    mw = rem.get(me)
+    if mw is None:
+        mw = 10 if wall_acts else 0
+    try:
+        mw = int(mw)
+    except Exception:
+        mw = 0
+
+    # moves: minimize own shortest distance to goal after stepping
+    best_move = None
+    best_mkey = None
+    fdir = FWD[opp]
+    opp_r = opp_idx // N
+    opp_c = opp_idx - opp_r * N
+    front = -1
+    fr = opp_r + fdir
+    if 0 <= fr < N and ekey(opp_idx, fr * N + opp_c) not in blocked:
+        front = fr * N + opp_c
+    for a in moves:
+        try:
+            t = parse_cell(a["to"])
+        except Exception:
+            continue
+        nd = f_my[t]
+        if nd < 0:
+            nd = 999
+        s = float(nd)
+        if t == front:  # standing right in front of the opponent lets them jump us
+            br = opp_r + 2 * fdir
+            if 0 <= br < N and ekey(t, br * N + opp_c) not in blocked:
+                s += 0.45
+            else:
+                s += 0.15
+        s += 0.01 * abs(t % N - 4)  # slight central preference as a tie-break
+        key = (s, str(a["to"]))
+        if best_mkey is None or key < best_mkey:
+            best_mkey = key
+            best_move = a
+
+    # walls: evaluate only those cutting an edge of some current
+    # shortest path of the opponent (others cannot slow them down)
+    best_gain_wall = None
+    bg_key = None
+    bg_gain = bg_md = bg_od = 0
+    best_block_wall = None
+    bb_key = None
+    bb_od = 0
+    if mw > 0 and wall_acts and opp_d < 999 and my_d < 999:
+        dp = bfs_field((opp_idx,), blocked)
+        total = opp_d
+        cands = []
+        for a in wall_acts:
+            try:
+                e1, e2 = wall_edges(a["at"], a["orientation"])
+            except Exception:
+                continue
+            on_path = False
+            near = 99
+            for (u, v) in (e1, e2):
+                du = dp[u]
+                dv = dp[v]
+                gu = f_op[u]
+                gv = f_op[v]
+                if du >= 0 and gv >= 0 and du + 1 + gv == total:
+                    on_path = True
+                if dv >= 0 and gu >= 0 and dv + 1 + gu == total:
+                    on_path = True
+                if 0 <= du < near:
+                    near = du
+                if 0 <= dv < near:
+                    near = dv
+            if on_path:
+                cands.append((near, str(a["at"]), str(a["orientation"]), a, e1, e2))
+        cands.sort(key=lambda x: (x[0], x[1], x[2]))
+        if len(cands) > 64:
+            cands = cands[:64]
+        gs_my = goal_sources(GOAL_ROW[me])
+        gs_op = goal_sources(GOAL_ROW[opp])
+        for near, at_s, o_s, a, e1, e2 in cands:
+            nb = set(blocked)
+            nb.add(e1)
+            nb.add(e2)
+            nmy = bfs_field(gs_my, nb)[my_idx]
+            nop = bfs_field(gs_op, nb)[opp_idx]
+            if nmy < 0 or nop < 0:
+                continue
+            md = nmy - my_d
+            od = nop - opp_d
+            gain = od - md
+            k1 = (-gain, md, at_s, o_s)
+            if bg_key is None or k1 < bg_key:
+                bg_key = k1
+                best_gain_wall = a
+                bg_gain, bg_md, bg_od = gain, md, od
+            k2 = (-od, md, at_s, o_s)
+            if bb_key is None or k2 < bb_key:
+                bb_key = k2
+                best_block_wall = a
+                bb_od = od
+
+    # choose between best move and best wall
+    if best_move is None and best_gain_wall is None:
+        return make_action(legal[0])
+    if best_move is None:
+        return make_action(best_gain_wall)
+    if best_gain_wall is None or mw <= 0:
+        return make_action(best_move)
+
+    margin = opp_d - my_d  # >= 0: we win a pure race because we move first
+    if margin < 0:
+        # Behind: a wall only changes the race if (od - md) >= 2,
+        # since placing it costs us one tempo.
+        if bg_gain >= 2:
+            return make_action(best_gain_wall)
+        if opp_d <= 2 and best_block_wall is not None and bb_od >= 1:
+            return make_action(best_block_wall)
+    else:
+        # Ahead: mostly race, but in a tight race grab a cheap strong wall.
+        if my_d > 2 and bg_md <= 0:
+            if (margin <= 1 and bg_gain >= 2) or (margin <= 2 and bg_gain >= 3):
+                return make_action(best_gain_wall)
+    return make_action(best_move)
+
 
 def main():
-    random.seed()
+    out = sys.stdout
     for line in sys.stdin:
-        line=line.strip()
+        line = line.strip()
         if not line:
             continue
         try:
-            state=json.loads(line)
-            ans=select_action(state)
-            print(json.dumps(ans,separators=(",",":")),flush=True)
-        except Exception as ex:
-            eprint("error",repr(ex))
+            state = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(state, dict):
+            continue
+        legal = state.get("legal_actions")
+        if not isinstance(legal, list) or not legal:
+            continue
+        try:
+            action = decide(state)
+        except Exception:
+            action = None
+        if action is None:
             try:
-                state=json.loads(line)
-                legal=state.get("legal_actions",[])
-                if legal:
-                    print(json.dumps(norm_action(random.choice(legal)),separators=(",",":")),flush=True)
-                else:
-                    print(json.dumps({"type":"action","action":"move","to":"e2"},separators=(",",":")),flush=True)
+                action = make_action(legal[0])
             except Exception:
-                print(json.dumps({"type":"action","action":"move","to":"e2"},separators=(",",":")),flush=True)
+                action = {"type": "action", "action": "move", "to": "e5"}
+        try:
+            out.write(json.dumps(action) + "\n")
+            out.flush()
+        except Exception:
+            pass
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     main()
