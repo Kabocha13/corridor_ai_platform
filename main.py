@@ -15,7 +15,7 @@ def main() -> None:
     match.add_argument("--p2", required=True)
     match.add_argument("--log", default=None)
     match.add_argument("--seed", type=int, default=None)
-    match.add_argument("--timeout", type=float, default=2.0)
+    match.add_argument("--timeout", type=float, default=5.0)
 
     tournament = sub.add_parser("tournament")
     tournament.add_argument("--p1", required=True)
@@ -23,7 +23,7 @@ def main() -> None:
     tournament.add_argument("--games", type=int, default=100)
     tournament.add_argument("--results", default="results/results.csv")
     tournament.add_argument("--seed", type=int, default=None)
-    tournament.add_argument("--timeout", type=float, default=2.0)
+    tournament.add_argument("--timeout", type=float, default=5.0)
 
     args = parser.parse_args()
     if args.command == "match":

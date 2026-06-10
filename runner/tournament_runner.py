@@ -31,7 +31,7 @@ def run_tournament(
     games: int = 100,
     results_file: str | Path = "results/results.csv",
     seed: int | None = None,
-    timeout_seconds: float = 2.0,
+    timeout_seconds: float = 5.0,
     on_match_complete: Callable[[int, int, MatchResult], None] | None = None,
 ) -> list[MatchResult]:
     base_rng = random.Random(seed)

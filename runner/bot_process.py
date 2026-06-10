@@ -24,7 +24,7 @@ class BotProcess:
     implementation without changing the match runner.
     """
 
-    def __init__(self, script_path: str | Path, timeout_seconds: float = 2.0):
+    def __init__(self, script_path: str | Path, timeout_seconds: float = 5.0):
         self.script_path = str(script_path)
         self.timeout_seconds = timeout_seconds
         self._process: subprocess.Popen[str] | None = None
