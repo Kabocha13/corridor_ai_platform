@@ -73,7 +73,8 @@ def wall_overlap_or_cross(state: GameState, wall: WallAction) -> bool:
 
 
 def legal_pawn_moves(state: GameState) -> list[MoveAction]:
-    x, y = coord_to_xy(state.pawns[state.turn])
+    current = state.pawns[state.turn]
+    x, y = coord_to_xy(current)
     occupied = state.pawns[opponent(state.turn)]
     moves: list[MoveAction] = []
     for dx, dy in ((0, 1), (1, 0), (0, -1), (-1, 0)):
@@ -81,11 +82,33 @@ def legal_pawn_moves(state: GameState) -> list[MoveAction]:
         if not (1 <= nx <= BOARD_SIZE and 1 <= ny <= BOARD_SIZE):
             continue
         target = xy_to_coord(nx, ny)
-        if target == occupied:
+        if blocked_by_wall(state, current, target):
             continue
-        if not blocked_by_wall(state, state.pawns[state.turn], target):
+        if target != occupied:
             moves.append(MoveAction(action="move", to=target))
+            continue
+
+        jump_x, jump_y = nx + dx, ny + dy
+        if 1 <= jump_x <= BOARD_SIZE and 1 <= jump_y <= BOARD_SIZE:
+            jump_target = xy_to_coord(jump_x, jump_y)
+            if not blocked_by_wall(state, occupied, jump_target):
+                moves.append(MoveAction(action="move", to=jump_target))
+                continue
+
+        for side_dx, side_dy in _perpendicular_directions(dx, dy):
+            side_x, side_y = nx + side_dx, ny + side_dy
+            if not (1 <= side_x <= BOARD_SIZE and 1 <= side_y <= BOARD_SIZE):
+                continue
+            side_target = xy_to_coord(side_x, side_y)
+            if not blocked_by_wall(state, occupied, side_target):
+                moves.append(MoveAction(action="move", to=side_target))
     return moves
+
+
+def _perpendicular_directions(dx: int, dy: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    if dx == 0:
+        return ((1, 0), (-1, 0))
+    return ((0, 1), (0, -1))
 
 
 def legal_wall_actions(state: GameState) -> list[WallAction]:

@@ -22,6 +22,69 @@ def test_move_actions_are_generated():
     assert MoveAction(action="move", to="e2") in legal_pawn_moves(state)
 
 
+def test_pawn_can_jump_over_adjacent_opponent():
+    state = initial_state()
+    state.pawns["P1"] = "e4"
+    state.pawns["P2"] = "e5"
+
+    moves = legal_pawn_moves(state)
+
+    assert MoveAction(action="move", to="e6") in moves
+    assert MoveAction(action="move", to="e5") not in moves
+    assert MoveAction(action="move", to="d5") not in moves
+    assert MoveAction(action="move", to="f5") not in moves
+
+
+def test_pawn_moves_diagonally_when_jump_is_blocked_by_wall():
+    state = initial_state()
+    state.pawns["P1"] = "e4"
+    state.pawns["P2"] = "e5"
+    state.walls.append(WallAction(action="wall", at="e5", orientation="h"))
+
+    moves = legal_pawn_moves(state)
+
+    assert MoveAction(action="move", to="e6") not in moves
+    assert MoveAction(action="move", to="d5") in moves
+    assert MoveAction(action="move", to="f5") in moves
+
+
+def test_diagonal_jump_respects_side_walls():
+    state = initial_state()
+    state.pawns["P1"] = "e4"
+    state.pawns["P2"] = "e5"
+    state.walls.append(WallAction(action="wall", at="e5", orientation="h"))
+    state.walls.append(WallAction(action="wall", at="d5", orientation="v"))
+
+    moves = legal_pawn_moves(state)
+
+    assert MoveAction(action="move", to="d5") not in moves
+    assert MoveAction(action="move", to="f5") in moves
+
+
+def test_pawn_moves_diagonally_when_jump_is_off_board():
+    state = initial_state()
+    state.pawns["P1"] = "e8"
+    state.pawns["P2"] = "e9"
+
+    moves = legal_pawn_moves(state)
+
+    assert MoveAction(action="move", to="d9") in moves
+    assert MoveAction(action="move", to="f9") in moves
+
+
+def test_pawn_cannot_jump_when_wall_blocks_adjacent_opponent():
+    state = initial_state()
+    state.pawns["P1"] = "e4"
+    state.pawns["P2"] = "e5"
+    state.walls.append(WallAction(action="wall", at="e4", orientation="h"))
+
+    moves = legal_pawn_moves(state)
+
+    assert MoveAction(action="move", to="e6") not in moves
+    assert MoveAction(action="move", to="d5") not in moves
+    assert MoveAction(action="move", to="f5") not in moves
+
+
 def test_wall_can_be_placed():
     state = initial_state()
     wall = WallAction(action="wall", at="e3", orientation="h")
