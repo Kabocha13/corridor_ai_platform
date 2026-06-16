@@ -5,7 +5,6 @@ from collections import deque
 # 探索の深さ (2手先を完璧に読みます。タイムアウトを考慮し2を推奨)
 MAX_DEPTH = 2
 
-
 def parse_coord(coord_str):
     """ "e4" ➔ (col, row) のインデックス (0-8) への変換 """
     col = ord(coord_str[0]) - ord("a")
